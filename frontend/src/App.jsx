@@ -13,16 +13,19 @@ export default function App() {
     const [text, setText] = useState('');
 
     useEffect(() => {
-        socket.current = connectWS();
+        // FIX 1: Add cleanup for the socket connection itself (prevents double connection)
+        const currentSocket = connectWS();
+        socket.current = currentSocket;
 
         socket.current.on('connect', () => {
+            // All listeners are attached inside 'connect' to ensure they are active when socket is ready
+
             socket.current.on('roomNotice', (userName) => {
                 console.log(`${userName} joined to group!`);
             });
 
             socket.current.on('chatMessage', (msg) => {
-                // push to existing messages list
-                console.log('msg', msg);
+                // This handles messages coming from the server (including the sender's own message)
                 setMessages((prev) => [...prev, msg]);
             });
 
@@ -43,14 +46,23 @@ export default function App() {
         });
 
         return () => {
+            // FIX 2: Remove all listeners when the component unmounts
+            socket.current.off('connect');
             socket.current.off('roomNotice');
             socket.current.off('chatMessage');
             socket.current.off('typing');
             socket.current.off('stopTyping');
+            
+            // FIX 3: Disconnect the socket instance (important for clean deployment)
+            if (currentSocket.connected) {
+                currentSocket.disconnect();
+            }
         };
     }, []);
 
     useEffect(() => {
+        if (!socket.current || showNamePopup) return; // Ensure socket is connected and name is set
+
         if (text) {
             socket.current.emit('typing', userName);
             clearTimeout(timer.current);
@@ -63,7 +75,7 @@ export default function App() {
         return () => {
             clearTimeout(timer.current);
         };
-    }, [text, userName]);
+    }, [text, userName, showNamePopup]);
 
     // FORMAT TIMESTAMP TO HH:MM FOR MESSAGES
     function formatTime(ts) {
@@ -98,7 +110,12 @@ export default function App() {
             text: t,
             ts: Date.now(),
         };
-        setMessages((m) => [...m, msg]);
+
+        // *************** FIX FOR DOUBLE MESSAGE START *****************
+        // REMOVE: setMessages((m) => [...m, msg]);
+        // The sender's message will now ONLY be added to the state 
+        // when it is broadcast back from the server (in the chatMessage listener).
+        // *************** FIX FOR DOUBLE MESSAGE END *****************
 
         // emit
         socket.current.emit('chatMessage', msg);
